@@ -1,0 +1,10 @@
+# Rust
+/target
+**/target
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Optional (library projects only — keep for binaries)
+Cargo.lock
