@@ -1,0 +1,16 @@
+csv,label,k,schedule,proof_bytes,prove_s,verify_ms,prove_elems_per_s,delta_size_pct_vs_paper,delta_prove_pct_vs_paper,delta_verify_pct_vs_paper,delta_throughput_pct_vs_paper
+csv,binary,11,[2],16568,0.676441,32.950,3027.611988,NaN,NaN,NaN,NaN
+csv,binary,12,[2],19784,1.278189,39.894,3204.532764,NaN,NaN,NaN,NaN
+csv,binary,13,[2],21672,2.519611,44.990,3251.295269,NaN,NaN,NaN,NaN
+csv,binary,14,[2],23240,4.997289,48.089,3278.577945,NaN,NaN,NaN,NaN
+csv,binary,15,[2],25832,9.829451,54.553,3333.655057,NaN,NaN,NaN,NaN
+csv,binary,16,[2],27016,19.578513,56.416,3347.343001,NaN,NaN,NaN,NaN
+csv,binary,17,[2],30312,39.817772,64.740,3291.796461,NaN,NaN,NaN,NaN
+csv,binary,18,[2],31240,79.386908,67.851,3302.106181,NaN,NaN,NaN,NaN
+csv,binary,19,[2],34280,157.606550,73.626,3326.562254,NaN,NaN,NaN,NaN
+csv,bianry-2,11,[2,2],29816,0.765557,62.151,2675.177829,NaN,NaN,NaN,NaN
+csv,bianry-2,12,[2,2],32904,1.460136,67.558,2805.218786,NaN,NaN,NaN,NaN
+csv,bianry-2,13,[2,2],38248,2.866331,83.156,2858.009570,NaN,NaN,NaN,NaN
+csv,bianry-2,14,[2,2],43272,5.584436,91.968,2933.868169,NaN,NaN,NaN,NaN
+csv,bianry-2,15,[2,2],46120,11.218372,102.373,2920.922842,NaN,NaN,NaN,NaN
+csv,bianry-2,16,[2,2],50440,22.338099,112.752,2933.821784,NaN,NaN,NaN,NaN
