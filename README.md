@@ -13,6 +13,9 @@ We also have results for FS-transform supported hash's
 - keccak
 - Blake3
 
+An interactive graph visualization tool is available to display benchmark results
+https://saholmes.github.io/stark-has/
+
 The code is split into 2 code bases:  
 
 stark-has-golidlocks
