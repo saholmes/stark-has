@@ -55,7 +55,7 @@
                     </div>
                 </div>
                 <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="groupSimilar" checked>
+                    <input class="form-check-input" type="checkbox" id="groupSimilar">
                     <label class="form-check-label" for="groupSimilar">Group similar arities (e.g., all 16-based)</label>
                 </div>
             </div>
@@ -69,38 +69,35 @@
     </div>
 
     <script>
-        // Configuration: Update with your repo (URL-encode spaces as %20, e.g., 'final%20-%20c5...')
+        // Configuration: Your csvUrls array (with all 9, URLs fixed)
         const csvUrls = [
-            { label: 't4g-micro', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/final-micro-t4g-rayon-r52-1gb-fullprotocol-dual-hash-pallas-sha3-e3.csv' },
-
-            // Add your other 8 CSVs here...
+            // Example: Add all 9 here, e.g.,
+            { label: 'T4G Micro (Rayon R52 1GB, Pallas, SHA3)', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/final-micro-t4g-rayon-r52-1gb-fullprotocol-dual-hash-pallas-sha3-e3.csv' },
+            { label: 'C5 AVX512 XLarge (R26, Goldilocks, Blake3)', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/final-c5-avx512-xlarge-r26-fullprotocol-dual-hash-goldilocks-blake3-e3.csv' },
+            // ... the other 7
         ];
 
-        let allData = {}; // { machineLabel: { originalRows: [...], parsedArities: { scheduleStr: { parsedArray: [...], label: 'friendly name' } } } }
+        let allData = {};
 
-        // Parse schedule string like "[16,16,8]" to array [16,16,8] and generate friendly label
+        // Parse schedule string like "[16,16,8]" to array and friendly label (unchanged)
         function parseSchedule(scheduleStr) {
             if (!scheduleStr || typeof scheduleStr !== 'string') return null;
-            // Clean: Remove brackets, split by comma, parse ints
             const cleaned = scheduleStr.replace(/[\[\]\s]/g, '').split(',').map(num => parseInt(num.trim())).filter(n => !isNaN(n));
-            if (cleaned.length < 2) return null; // At least 2 values as per your note
-
-            // Generate friendly label based on pattern (handles 2-5+ values)
+            if (cleaned.length < 2) return null;
             let label = '';
             if (cleaned.length === 3 && cleaned[0] === cleaned[1]) {
-                label = `${cleaned[0]}x2 + ${cleaned[2]}`; // e.g., "16x2 + 8"
+                label = `${cleaned[0]}x2 + ${cleaned[2]}`;
             } else if (cleaned.every(n => n === cleaned[0])) {
-                label = `${cleaned[0]}x${cleaned.length}`; // e.g., "32x3"
+                label = `${cleaned[0]}x${cleaned.length}`;
             } else if (cleaned.slice(0, -1).every(n => n === cleaned[0])) {
-                label = `${cleaned[0]}x${cleaned.length - 1} + ${cleaned[cleaned.length - 1]}`; // e.g., "16x4 + 512"
+                label = `${cleaned[0]}x${cleaned.length - 1} + ${cleaned[cleaned.length - 1]}`;
             } else {
-                // Fallback: Truncate original string
                 label = scheduleStr.replace(/[\[\]]/g, '').substring(0, 15) + (scheduleStr.length > 15 ? '...' : '');
             }
             return { array: cleaned, label: label, original: scheduleStr };
         }
 
-        // Load all CSVs asynchronously
+        // Load CSVs (unchanged, but added variant log)
         async function loadData() {
             const machineSelect = document.getElementById('machineSelect');
             const errorMsg = document.getElementById('errorMsg');
@@ -113,7 +110,6 @@
                     const csvText = await response.text();
                     const results = Papa.parse(csvText, { header: true, skipEmptyLines: true });
                     
-                    // Clean and validate rows
                     const originalRows = results.data
                         .map(row => {
                             Object.keys(row).forEach(key => {
@@ -121,16 +117,14 @@
                                 if (['k', 'proof_bytes', 'prove_s', 'verify_ms'].includes(key)) {
                                     row[key] = parseFloat(row[key]);
                                 }
-                                // Pre-parse schedule for this row
                                 if (row.schedule) {
                                     row.parsedSchedule = parseSchedule(row.schedule);
                                 }
                             });
                             return row;
                         })
-                        .filter(row => row.k && !isNaN(row.k) && row.parsedSchedule); // Require valid k and parsed schedule
+                        .filter(row => row.k && !isNaN(row.k) && row.parsedSchedule && row.label); // Require label too
 
-                    // Build parsedArities map for quick lookup/grouping
                     const parsedArities = {};
                     originalRows.forEach(row => {
                         const sch = row.parsedSchedule;
@@ -140,9 +134,9 @@
                     });
 
                     allData[label] = { originalRows, parsedArities };
-                    console.log(`Loaded ${label}: ${originalRows.length} rows. Sample parsed schedule: ${JSON.stringify(originalRows[0]?.parsedSchedule)}`);
+                    const uniqueVariants = [...new Set(originalRows.map(row => row.label).filter(v => v))];
+                    console.log(`Loaded ${label}: ${originalRows.length} rows. Variants: [${uniqueVariants.join(', ')}]. Sample schedule: ${JSON.stringify(originalRows[0]?.parsedSchedule)}`);
 
-                    // Populate machine dropdown
                     const option = document.createElement('option');
                     option.value = label;
                     option.textContent = label;
@@ -155,24 +149,31 @@
             }
         }
 
-        // Extract unique arities for a machine, optionally filtered by variant
+        // Get unique variants using 'label' column
+        function getUniqueVariants(machineLabel) {
+            const machineData = allData[machineLabel];
+            if (!machineData) return [];
+            const variants = [...new Set(machineData.originalRows.map(row => row.label).filter(v => v && v !== 'csv'))]; // Exclude constant 'csv' if present
+            console.log(`Unique variants for ${machineLabel}:`, variants);
+            return variants.sort();
+        }
+
+        // Extract unique arities (with fallback to individual if grouping empty)
         function getUniqueArities(machineLabel, variant = null, groupSimilar = false) {
             const machineData = allData[machineLabel];
-            if (!machineData) {
-                console.warn(`No data for ${machineLabel}`);
-                return [];
-            }
+            if (!machineData) return [];
             let filteredRows = machineData.originalRows;
             if (variant) {
-                filteredRows = filteredRows.filter(row => row.csv === variant);
+                filteredRows = filteredRows.filter(row => row.label === variant);
             }
-            if (filteredRows.length === 0) return [];
+            if (filteredRows.length === 0) {
+                console.warn(`No rows for variant ${variant} in ${machineLabel}`);
+                return [];
+            }
 
             const uniqueOriginalSchedules = [...new Set(filteredRows.map(row => row.schedule).filter(s => s))];
-            console.log(`Unique original schedules for ${machineLabel}${variant ? ` (variant: ${variant})` : ''}:`, uniqueOriginalSchedules);
 
             if (groupSimilar) {
-                // Example grouping: By base value (first number) - returns groups like { '16': [...] }
                 const groups = {};
                 uniqueOriginalSchedules.forEach(schStr => {
                     const parsed = parseSchedule(schStr);
@@ -182,87 +183,107 @@
                         groups[base].push(parsed);
                     }
                 });
-                console.log('Grouped by base arity:', groups);
-                return groups; // Object for grouped mode
-            } else {
-                // Individual: Return array of parsed objects
-                return uniqueOriginalSchedules
-                    .map(schStr => parseSchedule(schStr))
-                    .filter(p => p)
-                    .sort((a, b) => a.original.localeCompare(b.original));
+                console.log(`Grouped arities for ${machineLabel}${variant ? ` (variant: ${variant})` : ''}:`, groups);
+                if (Object.keys(groups).length > 0) return groups;
             }
+
+            // Fallback to individual
+            const individuals = uniqueOriginalSchedules
+                .map(schStr => parseSchedule(schStr))
+                .filter(p => p)
+                .sort((a, b) => a.original.localeCompare(b.original));
+            console.log(`Individual arities for ${machineLabel}${variant ? ` (variant: ${variant})` : ''}:`, individuals.map(p => p.label));
+            if (individuals.length === 0) {
+                console.warn('No valid arities found. Sample row keys:', Object.keys(filteredRows[0] || {}));
+                console.log('Sample row:', filteredRows[0]);
+            }
+            return individuals;
         }
 
-        // Update variant dropdown
+        // Update variant dropdown (now using 'label')
         function updateVariantDropdown(machineLabel) {
             const variantSelect = document.getElementById('variantSelect');
             variantSelect.innerHTML = '<option value="">All Variants</option>';
-            const machineData = allData[machineLabel];
-            if (!machineData) return;
-            const variants = [...new Set(machineData.originalRows.map(row => row.csv).filter(v => v))];
+            const variants = getUniqueVariants(machineLabel);
             variants.forEach(variant => {
                 const option = document.createElement('option');
                 option.value = variant;
                 option.textContent = variant;
                 variantSelect.appendChild(option);
             });
+            // Auto-select first variant (e.g., "paper")
+            if (variants.length > 0) {
+                variantSelect.value = variants[0];
+            }
         }
 
-        // Update arity dropdown
+        // Update arity dropdown (with fallback logic)
         function updateArityDropdown(machineLabel, variant, groupSimilar) {
             const aritySelect = document.getElementById('aritySelect');
-            aritySelect.innerHTML = ''; // Clear
-            const arities = getUniqueArities(machineLabel, variant, groupSimilar);
+            aritySelect.innerHTML = '';
+            let arities = getUniqueArities(machineLabel, variant, groupSimilar);
 
-            if (groupSimilar) {
-                // For grouped mode: Add options like "All 16-based", "All 32-based"
+            // If grouped but empty, fallback to individual
+            if (groupSimilar && typeof arities === 'object' && Object.keys(arities).length === 0) {
+                console.log('Grouped empty, falling back to individual');
+                arities = getUniqueArities(machineLabel, variant, false);
+                groupSimilar = false;
+            }
+
+            if (groupSimilar && typeof arities === 'object') {
+                // Grouped mode
                 Object.entries(arities).forEach(([base, group]) => {
                     const option = document.createElement('option');
-                    option.value = `group-${base}`; // Special value for grouping
-                    option.textContent = `All ${base}-based (${group.length} arities)`;
+                    option.value = `group-${base}`;
+                    option.textContent = `All ${base}-based (${group.length})`;
                     aritySelect.appendChild(option);
                 });
-                // Also add individual if few
-                if (Object.values(arities).flat().length <= 10) {
+                // Add individuals in optgroup if reasonable size
+                if (Object.values(arities).flat().length <= 15) {
                     const optGroup = document.createElement('optgroup');
-                    optGroup.label = 'Or select individuals:';
+                    optGroup.label = 'Individuals:';
                     Object.values(arities).flat().forEach(parsed => {
                         const option = document.createElement('option');
                         option.value = parsed.original;
                         option.textContent = parsed.label;
+                        option.title = parsed.original;
                         optGroup.appendChild(option);
                     });
                     aritySelect.appendChild(optGroup);
                 }
             } else {
-                // Individual mode
+                // Individual mode (array of parsed)
                 arities.forEach(parsed => {
                     const option = document.createElement('option');
-                    option.value = parsed.original; // Use original string for matching
-                    option.textContent = parsed.label; // Friendly display
-                    option.title = parsed.original; // Tooltip with full original
+                    option.value = parsed.original;
+                    option.textContent = parsed.label;
+                    option.title = parsed.original;
                     aritySelect.appendChild(option);
                 });
             }
 
-            // Auto-select: All if <=5, else first 3
-            const options = aritySelect.querySelectorAll('option:not([disabled])');
-            const numToSelect = Math.min(options.length, groupSimilar ? options.length : 3);
+            // Auto-select first 3 (or all if few)
+            const options = Array.from(aritySelect.querySelectorAll('option:not(optgroup)'));
+            const numToSelect = Math.min(options.length, 3);
             for (let i = 0; i < numToSelect; i++) {
                 options[i].selected = true;
             }
             if (options.length > 0) {
-                updateGraphs(); // Auto-update
+                updateGraphs();
+            } else {
+                document.getElementById('errorMsg').textContent = 'No arities found for selection. Check console.';
+                document.getElementById('errorMsg').style.display = 'block';
             }
         }
 
-        // Event listeners
+        // Event listeners (updated for label)
         document.getElementById('machineSelect').addEventListener('change', (e) => {
             const machineLabel = e.target.value;
             if (!machineLabel) return;
             updateVariantDropdown(machineLabel);
             const groupSimilar = document.getElementById('groupSimilar').checked;
-            updateArityDropdown(machineLabel, null, groupSimilar);
+            const variant = document.getElementById('variantSelect').value;
+            updateArityDropdown(machineLabel, variant, groupSimilar);
         });
 
         document.getElementById('variantSelect').addEventListener('change', (e) => {
@@ -278,7 +299,7 @@
             updateArityDropdown(machineLabel, variant, e.target.checked);
         });
 
-        // Update graphs (updated to handle groups)
+        // Update graphs (updated filtering to use 'label')
         document.getElementById('updateBtn').addEventListener('click', updateGraphs);
         document.getElementById('kMin').addEventListener('input', updateGraphs);
         document.getElementById('kMax').addEventListener('input', updateGraphs);
@@ -291,47 +312,35 @@
             const kMin = parseInt(document.getElementById('kMin').value) || 11;
             const kMax = parseInt(document.getElementById('kMax').value) || 25;
 
-            if (!machineLabel || selectedOptions.length === 0) {
-                console.warn('No machine or arities selected');
-                return;
-            }
+            if (!machineLabel || selectedOptions.length === 0) return;
 
             const machineData = allData[machineLabel];
             if (!machineData) return;
 
-            // Handle selected arities (individual or groups)
             let targetSchedules = selectedOptions.map(opt => opt.value).filter(v => v);
             if (groupSimilar) {
-                // Expand groups: e.g., if "group-16" selected, get all 16-based originals
                 targetSchedules = targetSchedules.flatMap(val => {
                     if (val.startsWith('group-')) {
                         const base = parseInt(val.split('-')[1]);
                         const groups = getUniqueArities(machineLabel, variant, true);
                         return groups[base]?.map(p => p.original) || [];
                     }
-                    return val; // Individual
+                    return val;
                 });
             }
 
-            if (targetSchedules.length === 0) {
-                console.warn('No valid schedules after expansion');
-                return;
-            }
+            if (targetSchedules.length === 0) return;
 
-            // Filter rows
+            // Filter using 'label' for variant
             let filteredData = machineData.originalRows.filter(row => 
-                (!variant || row.csv === variant) &&
+                (!variant || row.label === variant) &&
                 targetSchedules.includes(row.schedule) &&
                 row.k >= kMin && row.k <= kMax
             );
-            console.log(`Filtered data: ${filteredData.length} rows for schedules:`, targetSchedules.slice(0, 5)); // Log first 5
+            console.log(`Filtered: ${filteredData.length} rows for variant ${variant || 'all'}, schedules [${targetSchedules.slice(0,3).join(', ')}...]`);
 
-            if (filteredData.length === 0) {
-                console.warn('No matching data');
-                return;
-            }
+            if (filteredData.length === 0) return;
 
-            // Group by schedule for traces (same as before)
             const tracesBySchedule = {};
             targetSchedules.forEach(scheduleStr => {
                 const scheduleData = filteredData.filter(row => row.schedule === scheduleStr);
@@ -345,17 +354,16 @@
                         proveS: kVals.map(k => scheduleData.find(r => r.k === k)?.prove_s || null),
                         verifyMs: kVals.map(k => scheduleData.find(r => r.k === k)?.verify_ms || null)
                     };
-                    console.log(`Trace for ${label}: ${kVals.length} points`);
                 }
             });
 
             if (Object.keys(tracesBySchedule).length === 0) return;
 
-            // Plot (unchanged)
-            function plotData(divId, traces, title, yTitle) {
+            // Plot (simplified y mapping)
+            function plotData(divId, traces, title, yKey) {
                 const plotTraces = Object.entries(traces).map(([name, vals]) => ({
                     x: vals.k,
-                    y: vals[yTitle.toLowerCase().replace(' ', '') === 'proves' ? 'proveS' : yTitle.toLowerCase().includes('proof') ? 'proofBytes' : 'verifyMs'], // Map y
+                    y: vals[yKey],
                     type: 'scatter',
                     mode: 'lines+markers',
                     name: name,
@@ -364,16 +372,16 @@
                 Plotly.newPlot(divId, plotTraces, {
                     title: title,
                     xaxis: { title: 'k' },
-                    yaxis: { title: yTitle }
+                    yaxis: { title: yKey.replace(/([A-Z])/g, ' $1').trim() }
                 });
             }
 
-            plotData('proofSizePlot', tracesBySchedule, 'Proof Size (bytes) vs. k', 'Proof Bytes');
-            plotData('proverTimePlot', tracesBySchedule, 'Prover Time (s) vs. k', 'Prove Time (s)');
-            plotData('verifyTimePlot', tracesBySchedule, 'Verify Time (ms) vs. k', 'Verify Time (ms)');
+            plotData('proofSizePlot', tracesBySchedule, 'Proof Size (bytes) vs. k', 'proofBytes');
+            plotData('proverTimePlot', tracesBySchedule, 'Prover Time (s) vs. k', 'proveS');
+            plotData('verifyTimePlot', tracesBySchedule, 'Verify Time (ms) vs. k', 'verifyMs');
         }
 
-        // Init
+        // Init (uncheck group by default, auto-select first machine/variant/arities)
         loadData().then(() => {
             if (csvUrls.length > 0) {
                 setTimeout(() => {
@@ -381,8 +389,9 @@
                     if (machineSelect.options.length > 0) {
                         machineSelect.selectedIndex = 0;
                         machineSelect.dispatchEvent(new Event('change'));
+                        document.getElementById('groupSimilar').checked = false; // Default to individual
                     }
-                }, 5000);
+                }, 3000); // Shorter delay
             }
         });
     </script>
