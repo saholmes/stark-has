@@ -20,7 +20,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>Interactive STARK-HAS Benchmark Visualizer</h1>
+        <h1>Interactive STARK Benchmark Visualizer</h1>
         <p>Select variants to plot one dataset per variant (all arities grouped as base + .x over k). Arity multi-select filters within variants. k-range filters dynamically.</p>
         <div id="errorMsg" class="alert alert-warning">No data loaded or arities found. Check console for details.</div>
 
@@ -84,7 +84,6 @@
             { label: 'T4G Micro (Rayon R52 2 cores 1GB, Goldilocks, blake3)', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/final-micro-t4g-rayon-r52-1gb-fullprotocol-dual-hash-golidlocks-blake3-e3.csv'
               },
             { label: 'AVX512.xlarge (Rayon R52 8 cores 8GB, Goldilocks, blake3)', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/final-c5-avx512-xlarge-r52-fullprotocol-dual-hash-goldilocks-blake3-e3.csv' },
-        
             // Add the other 7 here once uploaded
         ];
 
@@ -451,10 +450,10 @@
                 });
             }
 
-            plotData('proofSizePlot', tracesByVariant, 'Proof Size (bytes) vs. k', 'proof (Bytes)');
-            plotData('proverTimePlot', tracesByVariant, 'Prover Time (s) vs. k', 'prove (s)');
-            plotData('verifyTimePlot', tracesByVariant, 'Verify Time (ms) vs. k', 'verify (ms)');
-            plotData('elemsPerSPlot', tracesByVariant, 'Prover Elements per Second vs. k', 'proveElemsPer second');
+            plotData('proofSizePlot', tracesByVariant, 'Proof Size (bytes) vs. k', 'proofBytes');
+            plotData('proverTimePlot', tracesByVariant, 'Prover Time (s) vs. k', 'proveS');
+            plotData('verifyTimePlot', tracesByVariant, 'Verify Time (ms) vs. k', 'verifyMs');
+            plotData('elemsPerSPlot', tracesByVariant, 'Prover Elements per Second vs. k', 'proveElemsPerS');
         }
 
         // Init
