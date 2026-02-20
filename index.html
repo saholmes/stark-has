@@ -48,10 +48,10 @@
                 <label class="form-label">k Range</label>
                 <div class="row">
                     <div class="col-6">
-                        <input type="number" id="kMin" class="form-control" value="11" min="11" max="25" placeholder="Min k">
+                        <input type="number" id="kMin" class="form-control" value="11" min="11" max="25" step="1" placeholder="Min k">
                     </div>
                     <div class="col-6">
-                        <input type="number" id="kMax" class="form-control" value="25" min="11" max="25" placeholder="Max k">
+                        <input type="number" id="kMax" class="form-control" value="25" min="11" max="25" step="1" placeholder="Max k">
                     </div>
                 </div>
                 <div class="form-check">
@@ -66,74 +66,32 @@
         <div id="proofSizePlot" class="plot-container"></div>
         <div id="proverTimePlot" class="plot-container"></div>
         <div id="verifyTimePlot" class="plot-container"></div>
-        <div id="elemsPerSPlot" class="plot-container"></div> <!-- New: Prover Elements per Second -->
+        <div id="elemsPerSPlot" class="plot-container"></div>
     </div>
 
     <script>
-        // Configuration: Update with all 9 CSVs (encode spaces as %20 in URLs)
+        // Configuration: Update with all 9 CSVs (no %20 needed if no spaces, but encode if present)
         const csvUrls = [
             { label: 'T4G Micro (Rayon R52 1GB, Pallas, SHA3)', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/data/final-micro-t4g-rayon-r52-1gb-fullprotocol-dual-hash-pallas-sha3-e3.csv' },
-           
-            // Add the other 7 here once uploaded, e.g.:
-            // { label: 'Another Machine', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/another-file.csv' },
+          
+            // Add the other 7 here once uploaded
         ];
 
         let allData = {};
 
-        // Fix unquoted comma fields in schedule (e.g., [16,16,8] splits into extra columns)
-        function fixCsvText(csvText) {
-            const lines = csvText.split(/\r?\n/);
-            const fixedLines = [lines[0]]; // Keep header unchanged
-            console.log('Fixing CSV lines (total:', lines.length, ')');
-            for (let i = 1; i < lines.length; i++) {
-                let line = lines[i];
-                if (!line.trim()) {
-                    fixedLines.push(line);
-                    continue;
-                }
-                let fields = line.split(',');
-                if (fields.length <= 12) { // No split (normal line)
-                    fixedLines.push(line);
-                    continue;
-                }
-                console.log(`Line ${i} split into ${fields.length} fields (expected 12) - reconstructing schedule`);
-                // Collect schedule parts starting from index 3 (schedule) until ends with ']'
-                let scheduleParts = [];
-                let j = 3;
-                while (j < fields.length && !fields[j].endsWith(']')) {
-                    scheduleParts.push(fields[j]);
-                    j++;
-                }
-                if (j < fields.length && fields[j].endsWith(']')) {
-                    scheduleParts.push(fields[j]);
-                    j++;
-                }
-                if (scheduleParts.length > 1) {
-                    // Reconstruct: Join parts with ',' (removes any extra spaces if present)
-                    const reconstructedSchedule = '[' + scheduleParts.join(',').replace(/\s/g, '') + ']';
-                    // Rebuild fields: 0-2 + reconstructed + j to end
-                    const fixedFields = [...fields.slice(0, 3), reconstructedSchedule, ...fields.slice(j)];
-                    // Ensure exactly 12 fields (trim extras if any)
-                    while (fixedFields.length > 12) fixedFields.pop();
-                    while (fixedFields.length < 12) fixedFields.push('');
-                    const fixedLine = fixedFields.join(',');
-                    fixedLines.push(fixedLine);
-                    console.log(`Reconstructed schedule: ${reconstructedSchedule}`);
-                } else {
-                    fixedLines.push(line); // Unfixable, keep as-is
-                }
-            }
-            const fixedText = fixedLines.join('\n');
-            console.log('Fixed CSV text preview (first data line):', fixedText.split('\n')[1]);
-            return fixedText;
-        }
-
-        // Parse schedule (unchanged)
+        // Parse schedule: Handles quoted strings like "[16,16,8]" by stripping quotes/brackets/spaces
         function parseSchedule(scheduleStr) {
             if (!scheduleStr || typeof scheduleStr !== 'string') return null;
-            let cleanedStr = scheduleStr.replace(/["'\[\]\s]/g, ''); // Remove quotes, brackets, spaces
+            // Strip quotes if present (e.g., '"[16,16,8]"' -> '[16,16,8]')
+            let cleanedStr = scheduleStr.replace(/^"|"$/g, '').trim();
+            // Remove brackets and spaces, split by comma
+            cleanedStr = cleanedStr.replace(/[\[\]\s]/g, '');
             const cleaned = cleanedStr.split(',').map(num => parseInt(num.trim())).filter(n => !isNaN(n));
-            if (cleaned.length < 2) return null;
+            if (cleaned.length < 2) {
+                console.warn(`Schedule too short (${cleaned.length} nums): "${scheduleStr}"`);
+                return { array: [], label: scheduleStr.substring(0, 20) + '...', original: scheduleStr };
+            }
+            // Generate friendly label
             let label = '';
             if (cleaned.length === 3 && cleaned[0] === cleaned[1]) {
                 label = `${cleaned[0]}x2 + ${cleaned[2]}`;
@@ -142,12 +100,12 @@
             } else if (cleaned.slice(0, -1).every(n => n === cleaned[0])) {
                 label = `${cleaned[0]}x${cleaned.length - 1} + ${cleaned[cleaned.length - 1]}`;
             } else {
-                label = scheduleStr.replace(/[\[\]\s]/g, '').substring(0, 15) + (scheduleStr.length > 15 ? '...' : '');
+                label = cleaned.join(', ').substring(0, 20) + (cleaned.join(', ').length > 20 ? '...' : '');
             }
             return { array: cleaned, label: label, original: scheduleStr };
         }
 
-        // Load CSVs with fix (added parseFloat for prove_elems_per_s)
+        // Load CSVs: No fix needed (quoted schedules parse as single fields)
         async function loadData() {
             const machineSelect = document.getElementById('machineSelect');
             const errorMsg = document.getElementById('errorMsg');
@@ -157,13 +115,10 @@
                 try {
                     const response = await fetch(url);
                     if (!response.ok) throw new Error(`HTTP ${response.status}: ${url}`);
-                    let csvText = await response.text();
+                    const csvText = await response.text();
                     console.log(`Fetched ${label} (${url}): ${csvText.length} chars`);
                     
-                    // Fix split schedules
-                    const fixedCsvText = fixCsvText(csvText);
-                    
-                    const results = Papa.parse(fixedCsvText, { header: true, skipEmptyLines: true, dynamicTyping: false });
+                    const results = Papa.parse(csvText, { header: true, skipEmptyLines: true, dynamicTyping: false });
                     console.log(`Raw parsed data length for ${label}: ${results.data.length}. Sample raw row:`, results.data[0] || 'None');
                     
                     const originalRows = results.data
@@ -180,15 +135,9 @@
                                     if (index === 0) console.log(`Parsed first schedule: ${row.schedule} ->`, row.parsedSchedule);
                                 }
                             });
-                            // Log if filter would fail
-                            if (row.k && !isNaN(row.k) && row.parsedSchedule && row.label) {
-                                // Good
-                            } else {
-                                console.warn(`Row ${index} filtered out: k=${row.k}, schedule=${row.schedule}, parsed=${row.parsedSchedule}, label=${row.label}`);
-                            }
                             return row;
                         })
-                        .filter(row => row.k && !isNaN(row.k) && row.parsedSchedule && row.label); // Require valid parsed schedule and label
+                        .filter(row => row.k && !isNaN(row.k) && row.parsedSchedule && row.parsedSchedule.array.length >= 2 && row.label); // Require valid parsed schedule (length >=2) and label
 
                     console.log(`Cleaned rows for ${label}: ${originalRows.length}. Sample cleaned row:`, originalRows[0] || 'None');
 
@@ -225,26 +174,27 @@
             return variants.sort();
         }
 
-        // Extract unique arities (unchanged)
+        // Extract unique arities (updated filter to use parsedSchedule.array.length >=2)
         function getUniqueArities(machineLabel, variant = null, groupSimilar = false) {
             const machineData = allData[machineLabel];
             if (!machineData) return [];
-            let filteredRows = machineData.originalRows;
+            let filteredRows = machineData.originalRows.filter(row => row.parsedSchedule && row.parsedSchedule.array.length >= 2);
             if (variant) {
                 filteredRows = filteredRows.filter(row => row.label === variant);
             }
             if (filteredRows.length === 0) {
-                console.warn(`No rows for variant ${variant} in ${machineLabel}`);
+                console.warn(`No rows with valid schedules for ${machineLabel}${variant ? ` (variant: ${variant})` : ''}. All rows sample:`, machineData.originalRows.slice(0, 2));
                 return [];
             }
 
             const uniqueOriginalSchedules = [...new Set(filteredRows.map(row => row.schedule).filter(s => s))];
+            console.log(`Unique schedules for ${machineLabel}${variant ? ` (variant: ${variant})` : ''}: [${uniqueOriginalSchedules.slice(0, 5).join(', ')}${uniqueOriginalSchedules.length > 5 ? '...' : ''}]`);
 
             if (groupSimilar) {
                 const groups = {};
                 uniqueOriginalSchedules.forEach(schStr => {
                     const parsed = parseSchedule(schStr);
-                    if (parsed) {
+                    if (parsed && parsed.array.length >= 2) {
                         const base = parsed.array[0];
                         if (!groups[base]) groups[base] = [];
                         groups[base].push(parsed);
@@ -254,10 +204,10 @@
                 if (Object.keys(groups).length > 0) return groups;
             }
 
-            // Fallback to individual
+            // Individual: Parse all unique
             const individuals = uniqueOriginalSchedules
                 .map(schStr => parseSchedule(schStr))
-                .filter(p => p)
+                .filter(p => p && p.array.length >= 2)
                 .sort((a, b) => a.original.localeCompare(b.original));
             console.log(`Individual arities for ${machineLabel}${variant ? ` (variant: ${variant})` : ''}:`, individuals.map(p => p.label));
             if (individuals.length === 0) {
@@ -360,7 +310,7 @@
             updateArityDropdown(machineLabel, variant, e.target.checked);
         });
 
-        // Update graphs (added prove_elems_per_s extraction and new plot)
+        // Update graphs (enhanced k range logging and filtering)
         document.getElementById('updateBtn').addEventListener('click', updateGraphs);
         document.getElementById('kMin').addEventListener('input', updateGraphs);
         document.getElementById('kMax').addEventListener('input', updateGraphs);
@@ -370,13 +320,22 @@
             const variant = document.getElementById('variantSelect').value;
             const selectedOptions = Array.from(document.getElementById('aritySelect').selectedOptions);
             const groupSimilar = document.getElementById('groupSimilar').checked;
-            const kMin = parseInt(document.getElementById('kMin').value) || 11;
-            const kMax = parseInt(document.getElementById('kMax').value) || 25;
+            const kMinInput = document.getElementById('kMin').value.trim();
+            const kMaxInput = document.getElementById('kMax').value.trim();
+            const kMin = parseInt(kMinInput) || 11;
+            const kMax = parseInt(kMaxInput) || 25;
+            console.log(`Update triggered: k range ${kMin}-${kMax} (inputs: "${kMinInput}"-"${kMaxInput}")`);
 
-            if (!machineLabel || selectedOptions.length === 0) return;
+            if (!machineLabel || selectedOptions.length === 0) {
+                console.warn('No machine or arities selected');
+                return;
+            }
 
             const machineData = allData[machineLabel];
-            if (!machineData) return;
+            if (!machineData) {
+                console.warn('No data for machine');
+                return;
+            }
 
             let targetSchedules = selectedOptions.map(opt => opt.value).filter(v => v);
             if (groupSimilar) {
@@ -390,35 +349,45 @@
                 });
             }
 
-            if (targetSchedules.length === 0) return;
+            if (targetSchedules.length === 0) {
+                console.warn('No target schedules');
+                return;
+            }
 
+            // Filter data (use parsedInt for k to ensure numeric comparison)
             let filteredData = machineData.originalRows.filter(row => 
                 (!variant || row.label === variant) &&
                 targetSchedules.includes(row.schedule) &&
-                row.k >= kMin && row.k <= kMax
+                parseInt(row.k) >= kMin && parseInt(row.k) <= kMax  // Explicit parseInt for safety
             );
-            console.log(`Filtered: ${filteredData.length} rows for variant ${variant || 'all'}, schedules [${targetSchedules.slice(0,3).join(', ')}...]`);
+            console.log(`Filtered: ${filteredData.length} rows for variant ${variant || 'all'}, schedules [${targetSchedules.slice(0,3).join(', ')}...], k range ${kMin}-${kMax}. Available k in data: [${[...new Set(filteredData.map(r => r.k))].sort((a,b)=>a-b).join(', ')}]`);
 
-            if (filteredData.length === 0) return;
+            if (filteredData.length === 0) {
+                console.warn('No matching data after filtering. Try wider k range.');
+                return;
+            }
 
             const tracesBySchedule = {};
             targetSchedules.forEach(scheduleStr => {
                 const scheduleData = filteredData.filter(row => row.schedule === scheduleStr);
                 if (scheduleData.length > 0) {
-                    const kVals = [...new Set(scheduleData.map(row => row.k))].sort((a, b) => a - b);
+                    const kVals = [...new Set(scheduleData.map(row => parseInt(row.k)))].sort((a, b) => a - b);
                     const parsed = parseSchedule(scheduleStr);
                     const label = parsed ? parsed.label : scheduleStr;
                     tracesBySchedule[label] = {
                         k: kVals,
-                        proofBytes: kVals.map(k => scheduleData.find(r => r.k === k)?.proof_bytes || null),
-                        proveS: kVals.map(k => scheduleData.find(r => r.k === k)?.prove_s || null),
-                        verifyMs: kVals.map(k => scheduleData.find(r => r.k === k)?.verify_ms || null),
-                        proveElemsPerS: kVals.map(k => scheduleData.find(r => r.k === k)?.prove_elems_per_s || null) // New: Elements per second
+                        proofBytes: kVals.map(k => scheduleData.find(r => parseInt(r.k) === k)?.proof_bytes || null),
+                        proveS: kVals.map(k => scheduleData.find(r => parseInt(r.k) === k)?.prove_s || null),
+                        verifyMs: kVals.map(k => scheduleData.find(r => parseInt(r.k) === k)?.verify_ms || null),
+                        proveElemsPerS: kVals.map(k => scheduleData.find(r => parseInt(r.k) === k)?.prove_elems_per_s || null)
                     };
                 }
             });
 
-            if (Object.keys(tracesBySchedule).length === 0) return;
+            if (Object.keys(tracesBySchedule).length === 0) {
+                console.warn('No traces after grouping');
+                return;
+            }
 
             function plotData(divId, traces, title, yKey) {
                 const plotTraces = Object.entries(traces).map(([name, vals]) => ({
@@ -439,7 +408,7 @@
             plotData('proofSizePlot', tracesBySchedule, 'Proof Size (bytes) vs. k', 'proofBytes');
             plotData('proverTimePlot', tracesBySchedule, 'Prover Time (s) vs. k', 'proveS');
             plotData('verifyTimePlot', tracesBySchedule, 'Verify Time (ms) vs. k', 'verifyMs');
-            plotData('elemsPerSPlot', tracesBySchedule, 'Prover Elements per Second vs. k', 'proveElemsPerS'); // New graph
+            plotData('elemsPerSPlot', tracesBySchedule, 'Prover Elements per Second vs. k', 'proveElemsPerS');
         }
 
         // Init
