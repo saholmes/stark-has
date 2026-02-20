@@ -69,20 +69,69 @@
     </div>
 
     <script>
-        // Configuration: Your csvUrls array (with all 9, URLs fixed)
+        // Configuration: Update with all 9 CSVs (encode spaces as %20 in URLs)
         const csvUrls = [
-            // Example: Add all 9 here, e.g.,
             { label: 'T4G Micro (Rayon R52 1GB, Pallas, SHA3)', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/final-micro-t4g-rayon-r52-1gb-fullprotocol-dual-hash-pallas-sha3-e3.csv' },
-            
-            // ... the other 7
+            { label: 'C5 AVX512 XLarge (R26, Goldilocks, Blake3)', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/final%20-%20c5-avx512-xlarge-r26-fullprotocol-dual-hash-goldilocks-blake3-e3.csv' },
+            // Add the other 7 here once uploaded, e.g.:
+            // { label: 'Another Machine', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/another-file.csv' },
         ];
 
         let allData = {};
 
-        // Parse schedule string like "[16,16,8]" to array and friendly label (unchanged)
+        // Fix unquoted comma fields in schedule (e.g., [16,16,8] splits into extra columns)
+        function fixCsvText(csvText) {
+            const lines = csvText.split(/\r?\n/);
+            const fixedLines = [lines[0]]; // Keep header unchanged
+            console.log('Fixing CSV lines (total:', lines.length, ')');
+            for (let i = 1; i < lines.length; i++) {
+                let line = lines[i];
+                if (!line.trim()) {
+                    fixedLines.push(line);
+                    continue;
+                }
+                let fields = line.split(',');
+                if (fields.length <= 12) { // No split (normal line)
+                    fixedLines.push(line);
+                    continue;
+                }
+                console.log(`Line ${i} split into ${fields.length} fields (expected 12) - reconstructing schedule`);
+                // Collect schedule parts starting from index 3 (schedule) until ends with ']'
+                let scheduleParts = [];
+                let j = 3;
+                while (j < fields.length && !fields[j].endsWith(']')) {
+                    scheduleParts.push(fields[j]);
+                    j++;
+                }
+                if (j < fields.length && fields[j].endsWith(']')) {
+                    scheduleParts.push(fields[j]);
+                    j++;
+                }
+                if (scheduleParts.length > 1) {
+                    // Reconstruct: Join parts with ',' (removes any extra spaces if present)
+                    const reconstructedSchedule = '[' + scheduleParts.join(',').replace(/\s/g, '') + ']';
+                    // Rebuild fields: 0-2 + reconstructed + j to end
+                    const fixedFields = [...fields.slice(0, 3), reconstructedSchedule, ...fields.slice(j)];
+                    // Ensure exactly 12 fields (trim extras if any)
+                    while (fixedFields.length > 12) fixedFields.pop();
+                    while (fixedFields.length < 12) fixedFields.push('');
+                    const fixedLine = fixedFields.join(',');
+                    fixedLines.push(fixedLine);
+                    console.log(`Reconstructed schedule: ${reconstructedSchedule}`);
+                } else {
+                    fixedLines.push(line); // Unfixable, keep as-is
+                }
+            }
+            const fixedText = fixedLines.join('\n');
+            console.log('Fixed CSV text preview (first data line):', fixedText.split('\n')[1]);
+            return fixedText;
+        }
+
+        // Parse schedule (unchanged)
         function parseSchedule(scheduleStr) {
             if (!scheduleStr || typeof scheduleStr !== 'string') return null;
-            const cleaned = scheduleStr.replace(/[\[\]\s]/g, '').split(',').map(num => parseInt(num.trim())).filter(n => !isNaN(n));
+            let cleanedStr = scheduleStr.replace(/["'\[\]\s]/g, ''); // Remove quotes, brackets, spaces
+            const cleaned = cleanedStr.split(',').map(num => parseInt(num.trim())).filter(n => !isNaN(n));
             if (cleaned.length < 2) return null;
             let label = '';
             if (cleaned.length === 3 && cleaned[0] === cleaned[1]) {
@@ -92,12 +141,12 @@
             } else if (cleaned.slice(0, -1).every(n => n === cleaned[0])) {
                 label = `${cleaned[0]}x${cleaned.length - 1} + ${cleaned[cleaned.length - 1]}`;
             } else {
-                label = scheduleStr.replace(/[\[\]]/g, '').substring(0, 15) + (scheduleStr.length > 15 ? '...' : '');
+                label = scheduleStr.replace(/[\[\]\s]/g, '').substring(0, 15) + (scheduleStr.length > 15 ? '...' : '');
             }
             return { array: cleaned, label: label, original: scheduleStr };
         }
 
-        // Load CSVs (unchanged, but added variant log)
+        // Load CSVs with fix
         async function loadData() {
             const machineSelect = document.getElementById('machineSelect');
             const errorMsg = document.getElementById('errorMsg');
@@ -107,23 +156,40 @@
                 try {
                     const response = await fetch(url);
                     if (!response.ok) throw new Error(`HTTP ${response.status}: ${url}`);
-                    const csvText = await response.text();
-                    const results = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+                    let csvText = await response.text();
+                    console.log(`Fetched ${label} (${url}): ${csvText.length} chars`);
+                    
+                    // Fix split schedules
+                    const fixedCsvText = fixCsvText(csvText);
+                    
+                    const results = Papa.parse(fixedCsvText, { header: true, skipEmptyLines: true, dynamicTyping: false });
+                    console.log(`Raw parsed data length for ${label}: ${results.data.length}. Sample raw row:`, results.data[0] || 'None');
                     
                     const originalRows = results.data
-                        .map(row => {
+                        .map((row, index) => {
+                            // Log first row for debug
+                            if (index === 0) console.log(`Cleaning first row for ${label}:`, row);
                             Object.keys(row).forEach(key => {
-                                if (row[key] === '' || row[key] === undefined) row[key] = null;
-                                if (['k', 'proof_bytes', 'prove_s', 'verify_ms'].includes(key)) {
+                                if (row[key] === '' || row[key] === undefined || row[key] === null) row[key] = null;
+                                if (['k', 'proof_bytes', 'prove_s', 'verify_ms', 'prove_elems_per_s'].includes(key)) {
                                     row[key] = parseFloat(row[key]);
                                 }
                                 if (row.schedule) {
                                     row.parsedSchedule = parseSchedule(row.schedule);
+                                    if (index === 0) console.log(`Parsed first schedule: ${row.schedule} ->`, row.parsedSchedule);
                                 }
                             });
+                            // Log if filter would fail
+                            if (row.k && !isNaN(row.k) && row.parsedSchedule && row.label) {
+                                // Good
+                            } else {
+                                console.warn(`Row ${index} filtered out: k=${row.k}, schedule=${row.schedule}, parsed=${row.parsedSchedule}, label=${row.label}`);
+                            }
                             return row;
                         })
-                        .filter(row => row.k && !isNaN(row.k) && row.parsedSchedule && row.label); // Require label too
+                        .filter(row => row.k && !isNaN(row.k) && row.parsedSchedule && row.label); // Require valid parsed schedule and label
+
+                    console.log(`Cleaned rows for ${label}: ${originalRows.length}. Sample cleaned row:`, originalRows[0] || 'None');
 
                     const parsedArities = {};
                     originalRows.forEach(row => {
@@ -134,7 +200,7 @@
                     });
 
                     allData[label] = { originalRows, parsedArities };
-                    const uniqueVariants = [...new Set(originalRows.map(row => row.label).filter(v => v))];
+                    const uniqueVariants = [...new Set(originalRows.map(row => row.label).filter(v => v && v !== 'csv'))];
                     console.log(`Loaded ${label}: ${originalRows.length} rows. Variants: [${uniqueVariants.join(', ')}]. Sample schedule: ${JSON.stringify(originalRows[0]?.parsedSchedule)}`);
 
                     const option = document.createElement('option');
@@ -143,22 +209,22 @@
                     machineSelect.appendChild(option);
                 } catch (err) {
                     console.error(`Error loading ${label} (${url}):`, err);
-                    errorMsg.textContent = `Failed to load ${label}: ${err.message}. Check URL.`;
+                    errorMsg.textContent += `\nFailed to load ${label}: ${err.message}. Check URL and upload file.`;
                     errorMsg.style.display = 'block';
                 }
             }
         }
 
-        // Get unique variants using 'label' column
+        // Get unique variants (unchanged from last version)
         function getUniqueVariants(machineLabel) {
             const machineData = allData[machineLabel];
             if (!machineData) return [];
-            const variants = [...new Set(machineData.originalRows.map(row => row.label).filter(v => v && v !== 'csv'))]; // Exclude constant 'csv' if present
+            const variants = [...new Set(machineData.originalRows.map(row => row.label).filter(v => v && v !== 'csv'))];
             console.log(`Unique variants for ${machineLabel}:`, variants);
             return variants.sort();
         }
 
-        // Extract unique arities (with fallback to individual if grouping empty)
+        // Extract unique arities (unchanged)
         function getUniqueArities(machineLabel, variant = null, groupSimilar = false) {
             const machineData = allData[machineLabel];
             if (!machineData) return [];
@@ -200,7 +266,7 @@
             return individuals;
         }
 
-        // Update variant dropdown (now using 'label')
+        // Update variant dropdown (unchanged)
         function updateVariantDropdown(machineLabel) {
             const variantSelect = document.getElementById('variantSelect');
             variantSelect.innerHTML = '<option value="">All Variants</option>';
@@ -211,19 +277,17 @@
                 option.textContent = variant;
                 variantSelect.appendChild(option);
             });
-            // Auto-select first variant (e.g., "paper")
             if (variants.length > 0) {
                 variantSelect.value = variants[0];
             }
         }
 
-        // Update arity dropdown (with fallback logic)
+        // Update arity dropdown (unchanged)
         function updateArityDropdown(machineLabel, variant, groupSimilar) {
             const aritySelect = document.getElementById('aritySelect');
             aritySelect.innerHTML = '';
             let arities = getUniqueArities(machineLabel, variant, groupSimilar);
 
-            // If grouped but empty, fallback to individual
             if (groupSimilar && typeof arities === 'object' && Object.keys(arities).length === 0) {
                 console.log('Grouped empty, falling back to individual');
                 arities = getUniqueArities(machineLabel, variant, false);
@@ -231,14 +295,12 @@
             }
 
             if (groupSimilar && typeof arities === 'object') {
-                // Grouped mode
                 Object.entries(arities).forEach(([base, group]) => {
                     const option = document.createElement('option');
                     option.value = `group-${base}`;
                     option.textContent = `All ${base}-based (${group.length})`;
                     aritySelect.appendChild(option);
                 });
-                // Add individuals in optgroup if reasonable size
                 if (Object.values(arities).flat().length <= 15) {
                     const optGroup = document.createElement('optgroup');
                     optGroup.label = 'Individuals:';
@@ -252,7 +314,6 @@
                     aritySelect.appendChild(optGroup);
                 }
             } else {
-                // Individual mode (array of parsed)
                 arities.forEach(parsed => {
                     const option = document.createElement('option');
                     option.value = parsed.original;
@@ -262,7 +323,6 @@
                 });
             }
 
-            // Auto-select first 3 (or all if few)
             const options = Array.from(aritySelect.querySelectorAll('option:not(optgroup)'));
             const numToSelect = Math.min(options.length, 3);
             for (let i = 0; i < numToSelect; i++) {
@@ -276,7 +336,7 @@
             }
         }
 
-        // Event listeners (updated for label)
+        // Event listeners (unchanged)
         document.getElementById('machineSelect').addEventListener('change', (e) => {
             const machineLabel = e.target.value;
             if (!machineLabel) return;
@@ -299,7 +359,7 @@
             updateArityDropdown(machineLabel, variant, e.target.checked);
         });
 
-        // Update graphs (updated filtering to use 'label')
+        // Update graphs (unchanged)
         document.getElementById('updateBtn').addEventListener('click', updateGraphs);
         document.getElementById('kMin').addEventListener('input', updateGraphs);
         document.getElementById('kMax').addEventListener('input', updateGraphs);
@@ -331,7 +391,6 @@
 
             if (targetSchedules.length === 0) return;
 
-            // Filter using 'label' for variant
             let filteredData = machineData.originalRows.filter(row => 
                 (!variant || row.label === variant) &&
                 targetSchedules.includes(row.schedule) &&
@@ -359,7 +418,6 @@
 
             if (Object.keys(tracesBySchedule).length === 0) return;
 
-            // Plot (simplified y mapping)
             function plotData(divId, traces, title, yKey) {
                 const plotTraces = Object.entries(traces).map(([name, vals]) => ({
                     x: vals.k,
@@ -381,7 +439,7 @@
             plotData('verifyTimePlot', tracesBySchedule, 'Verify Time (ms) vs. k', 'verifyMs');
         }
 
-        // Init (uncheck group by default, auto-select first machine/variant/arities)
+        // Init
         loadData().then(() => {
             if (csvUrls.length > 0) {
                 setTimeout(() => {
@@ -389,9 +447,9 @@
                     if (machineSelect.options.length > 0) {
                         machineSelect.selectedIndex = 0;
                         machineSelect.dispatchEvent(new Event('change'));
-                        document.getElementById('groupSimilar').checked = false; // Default to individual
+                        document.getElementById('groupSimilar').checked = false;
                     }
-                }, 3000); // Shorter delay
+                }, 3000);
             }
         });
     </script>
