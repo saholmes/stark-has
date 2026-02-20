@@ -14,28 +14,37 @@
         body { padding: 20px; }
         .plot-container { height: 400px; margin: 20px 0; }
         select[multiple] { height: 150px; }
+        #errorMsg { color: red; display: none; }
+        .form-check { margin-top: 10px; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Interactive STARK Benchmark Visualizer</h1>
-        <p>Select options below to visualize proof size, prover time, and verify time vs. k for different arities.</p>
+        <p>Select options below to visualize proof size, prover time, and verify time vs. k for different arities (schedules).</p>
+        <div id="errorMsg" class="alert alert-warning">No data loaded or arities found. Check console for details.</div>
 
         <!-- Controls -->
         <div class="row mb-3">
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label for="machineSelect" class="form-label">Machine Type (CSV File)</label>
                 <select id="machineSelect" class="form-select">
                     <!-- Populated by JS -->
                 </select>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
+                <label for="variantSelect" class="form-label">Variant (e.g., paper/mod16)</label>
+                <select id="variantSelect" class="form-select">
+                    <!-- Populated by JS -->
+                </select>
+            </div>
+            <div class="col-md-3">
                 <label for="aritySelect" class="form-label">Arities (Schedules) - Hold Ctrl/Cmd for multi-select</label>
                 <select id="aritySelect" class="form-select" multiple>
                     <!-- Populated by JS -->
                 </select>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
                 <label class="form-label">k Range</label>
                 <div class="row">
                     <div class="col-6">
@@ -44,6 +53,10 @@
                     <div class="col-6">
                         <input type="number" id="kMax" class="form-control" value="25" min="11" max="25" placeholder="Max k">
                     </div>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="groupSimilar" checked>
+                    <label class="form-check-label" for="groupSimilar">Group similar arities (e.g., all 16-based)</label>
                 </div>
             </div>
         </div>
@@ -56,164 +69,321 @@
     </div>
 
     <script>
-        // Configuration: Replace with your repo details
+        // Configuration: Update with your repo (URL-encode spaces as %20, e.g., 'final%20-%20c5...')
         const csvUrls = [
-            { label: 'C5 AVX512 XLarge (R26, Dual-Hash, Goldilocks, Blake3)', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/final-c5-avx512-xlarge-r26-fullprotocol-dual-hash-goldilocks-blake3-e3.csv' },
-            // Add your other 8 CSVs here, e.g.:
-            // { label: 'Another Machine (e.g., C5 Smaller)', url: 'https://raw.githubusercontent.com/{username}/{repo}/main/data/another-file.csv' },
-            // ... (total 9)
+            { label: 'C5 AVX512 XLarge', url: 'https://raw.githubusercontent.com/saholmes/stark-has/main/results/final%20-%20c5-avx512-xlarge-r26-fullprotocol-dual-hash-goldilocks-blake3-e3.csv' },
+            // Add your other 8 CSVs here...
         ];
 
-        let allData = {}; // { machineLabel: parsed CSV data }
+        let allData = {}; // { machineLabel: { originalRows: [...], parsedArities: { scheduleStr: { parsedArray: [...], label: 'friendly name' } } } }
 
-        // Load all CSVs on page load
+        // Parse schedule string like "[16,16,8]" to array [16,16,8] and generate friendly label
+        function parseSchedule(scheduleStr) {
+            if (!scheduleStr || typeof scheduleStr !== 'string') return null;
+            // Clean: Remove brackets, split by comma, parse ints
+            const cleaned = scheduleStr.replace(/[\[\]\s]/g, '').split(',').map(num => parseInt(num.trim())).filter(n => !isNaN(n));
+            if (cleaned.length < 2) return null; // At least 2 values as per your note
+
+            // Generate friendly label based on pattern (handles 2-5+ values)
+            let label = '';
+            if (cleaned.length === 3 && cleaned[0] === cleaned[1]) {
+                label = `${cleaned[0]}x2 + ${cleaned[2]}`; // e.g., "16x2 + 8"
+            } else if (cleaned.every(n => n === cleaned[0])) {
+                label = `${cleaned[0]}x${cleaned.length}`; // e.g., "32x3"
+            } else if (cleaned.slice(0, -1).every(n => n === cleaned[0])) {
+                label = `${cleaned[0]}x${cleaned.length - 1} + ${cleaned[cleaned.length - 1]}`; // e.g., "16x4 + 512"
+            } else {
+                // Fallback: Truncate original string
+                label = scheduleStr.replace(/[\[\]]/g, '').substring(0, 15) + (scheduleStr.length > 15 ? '...' : '');
+            }
+            return { array: cleaned, label: label, original: scheduleStr };
+        }
+
+        // Load all CSVs asynchronously
         async function loadData() {
             const machineSelect = document.getElementById('machineSelect');
-            csvUrls.forEach(({ label, url }) => {
-                const option = document.createElement('option');
-                option.value = label;
-                option.textContent = label;
-                machineSelect.appendChild(option);
+            const errorMsg = document.getElementById('errorMsg');
+            errorMsg.style.display = 'none';
 
-                // Fetch and parse CSV
-                Papa.parse(url, {
-                    download: true,
-                    header: true,
-                    complete: (results) => {
-                        allData[label] = results.data.filter(row => row.k && !isNaN(row.k)); // Filter valid rows
-                        console.log(`Loaded ${label}: ${allData[label].length} rows`);
-                    },
-                    error: (err) => console.error(`Error loading ${label}:`, err)
+            for (const { label, url } of csvUrls) {
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error(`HTTP ${response.status}: ${url}`);
+                    const csvText = await response.text();
+                    const results = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+                    
+                    // Clean and validate rows
+                    const originalRows = results.data
+                        .map(row => {
+                            Object.keys(row).forEach(key => {
+                                if (row[key] === '' || row[key] === undefined) row[key] = null;
+                                if (['k', 'proof_bytes', 'prove_s', 'verify_ms'].includes(key)) {
+                                    row[key] = parseFloat(row[key]);
+                                }
+                                // Pre-parse schedule for this row
+                                if (row.schedule) {
+                                    row.parsedSchedule = parseSchedule(row.schedule);
+                                }
+                            });
+                            return row;
+                        })
+                        .filter(row => row.k && !isNaN(row.k) && row.parsedSchedule); // Require valid k and parsed schedule
+
+                    // Build parsedArities map for quick lookup/grouping
+                    const parsedArities = {};
+                    originalRows.forEach(row => {
+                        const sch = row.parsedSchedule;
+                        if (sch && !parsedArities[sch.original]) {
+                            parsedArities[sch.original] = sch;
+                        }
+                    });
+
+                    allData[label] = { originalRows, parsedArities };
+                    console.log(`Loaded ${label}: ${originalRows.length} rows. Sample parsed schedule: ${JSON.stringify(originalRows[0]?.parsedSchedule)}`);
+
+                    // Populate machine dropdown
+                    const option = document.createElement('option');
+                    option.value = label;
+                    option.textContent = label;
+                    machineSelect.appendChild(option);
+                } catch (err) {
+                    console.error(`Error loading ${label} (${url}):`, err);
+                    errorMsg.textContent = `Failed to load ${label}: ${err.message}. Check URL.`;
+                    errorMsg.style.display = 'block';
+                }
+            }
+        }
+
+        // Extract unique arities for a machine, optionally filtered by variant
+        function getUniqueArities(machineLabel, variant = null, groupSimilar = false) {
+            const machineData = allData[machineLabel];
+            if (!machineData) {
+                console.warn(`No data for ${machineLabel}`);
+                return [];
+            }
+            let filteredRows = machineData.originalRows;
+            if (variant) {
+                filteredRows = filteredRows.filter(row => row.csv === variant);
+            }
+            if (filteredRows.length === 0) return [];
+
+            const uniqueOriginalSchedules = [...new Set(filteredRows.map(row => row.schedule).filter(s => s))];
+            console.log(`Unique original schedules for ${machineLabel}${variant ? ` (variant: ${variant})` : ''}:`, uniqueOriginalSchedules);
+
+            if (groupSimilar) {
+                // Example grouping: By base value (first number) - returns groups like { '16': [...] }
+                const groups = {};
+                uniqueOriginalSchedules.forEach(schStr => {
+                    const parsed = parseSchedule(schStr);
+                    if (parsed) {
+                        const base = parsed.array[0];
+                        if (!groups[base]) groups[base] = [];
+                        groups[base].push(parsed);
+                    }
                 });
+                console.log('Grouped by base arity:', groups);
+                return groups; // Object for grouped mode
+            } else {
+                // Individual: Return array of parsed objects
+                return uniqueOriginalSchedules
+                    .map(schStr => parseSchedule(schStr))
+                    .filter(p => p)
+                    .sort((a, b) => a.original.localeCompare(b.original));
+            }
+        }
+
+        // Update variant dropdown
+        function updateVariantDropdown(machineLabel) {
+            const variantSelect = document.getElementById('variantSelect');
+            variantSelect.innerHTML = '<option value="">All Variants</option>';
+            const machineData = allData[machineLabel];
+            if (!machineData) return;
+            const variants = [...new Set(machineData.originalRows.map(row => row.csv).filter(v => v))];
+            variants.forEach(variant => {
+                const option = document.createElement('option');
+                option.value = variant;
+                option.textContent = variant;
+                variantSelect.appendChild(option);
             });
         }
 
-        // Extract unique arities for a machine
-        function getUniqueArities(machineLabel) {
-            const data = allData[machineLabel];
-            if (!data) return [];
-            const arities = [...new Set(data.map(row => row.schedule).filter(s => s))];
-            return arities.sort();
-        }
-
-        // Update arity dropdown when machine changes
-        document.getElementById('machineSelect').addEventListener('change', (e) => {
-            const machineLabel = e.target.value;
+        // Update arity dropdown
+        function updateArityDropdown(machineLabel, variant, groupSimilar) {
             const aritySelect = document.getElementById('aritySelect');
             aritySelect.innerHTML = ''; // Clear
-            getUniqueArities(machineLabel).forEach(arity => {
-                const option = document.createElement('option');
-                option.value = arity;
-                option.textContent = arity;
-                aritySelect.appendChild(option);
-            });
-            // Auto-select first 3 arities if available
-            for (let i = 0; i < Math.min(3, aritySelect.options.length); i++) {
-                aritySelect.options[i].selected = true;
+            const arities = getUniqueArities(machineLabel, variant, groupSimilar);
+
+            if (groupSimilar) {
+                // For grouped mode: Add options like "All 16-based", "All 32-based"
+                Object.entries(arities).forEach(([base, group]) => {
+                    const option = document.createElement('option');
+                    option.value = `group-${base}`; // Special value for grouping
+                    option.textContent = `All ${base}-based (${group.length} arities)`;
+                    aritySelect.appendChild(option);
+                });
+                // Also add individual if few
+                if (Object.values(arities).flat().length <= 10) {
+                    const optGroup = document.createElement('optgroup');
+                    optGroup.label = 'Or select individuals:';
+                    Object.values(arities).flat().forEach(parsed => {
+                        const option = document.createElement('option');
+                        option.value = parsed.original;
+                        option.textContent = parsed.label;
+                        optGroup.appendChild(option);
+                    });
+                    aritySelect.appendChild(optGroup);
+                }
+            } else {
+                // Individual mode
+                arities.forEach(parsed => {
+                    const option = document.createElement('option');
+                    option.value = parsed.original; // Use original string for matching
+                    option.textContent = parsed.label; // Friendly display
+                    option.title = parsed.original; // Tooltip with full original
+                    aritySelect.appendChild(option);
+                });
             }
-            updateGraphs(); // Auto-update
+
+            // Auto-select: All if <=5, else first 3
+            const options = aritySelect.querySelectorAll('option:not([disabled])');
+            const numToSelect = Math.min(options.length, groupSimilar ? options.length : 3);
+            for (let i = 0; i < numToSelect; i++) {
+                options[i].selected = true;
+            }
+            if (options.length > 0) {
+                updateGraphs(); // Auto-update
+            }
+        }
+
+        // Event listeners
+        document.getElementById('machineSelect').addEventListener('change', (e) => {
+            const machineLabel = e.target.value;
+            if (!machineLabel) return;
+            updateVariantDropdown(machineLabel);
+            const groupSimilar = document.getElementById('groupSimilar').checked;
+            updateArityDropdown(machineLabel, null, groupSimilar);
         });
 
-        // Update graphs on button click or k change
+        document.getElementById('variantSelect').addEventListener('change', (e) => {
+            const machineLabel = document.getElementById('machineSelect').value;
+            const variant = e.target.value;
+            const groupSimilar = document.getElementById('groupSimilar').checked;
+            updateArityDropdown(machineLabel, variant, groupSimilar);
+        });
+
+        document.getElementById('groupSimilar').addEventListener('change', (e) => {
+            const machineLabel = document.getElementById('machineSelect').value;
+            const variant = document.getElementById('variantSelect').value;
+            updateArityDropdown(machineLabel, variant, e.target.checked);
+        });
+
+        // Update graphs (updated to handle groups)
         document.getElementById('updateBtn').addEventListener('click', updateGraphs);
         document.getElementById('kMin').addEventListener('input', updateGraphs);
         document.getElementById('kMax').addEventListener('input', updateGraphs);
 
         function updateGraphs() {
             const machineLabel = document.getElementById('machineSelect').value;
-            const selectedArities = Array.from(document.getElementById('aritySelect').selectedOptions).map(opt => opt.value);
+            const variant = document.getElementById('variantSelect').value;
+            const selectedOptions = Array.from(document.getElementById('aritySelect').selectedOptions);
+            const groupSimilar = document.getElementById('groupSimilar').checked;
             const kMin = parseInt(document.getElementById('kMin').value) || 11;
             const kMax = parseInt(document.getElementById('kMax').value) || 25;
 
-            if (!machineLabel || selectedArities.length === 0) {
-                console.warn('No selection'); return;
+            if (!machineLabel || selectedOptions.length === 0) {
+                console.warn('No machine or arities selected');
+                return;
             }
 
-            const data = allData[machineLabel];
-            if (!data) return;
+            const machineData = allData[machineLabel];
+            if (!machineData) return;
 
-            // Filter data
-            const filteredData = data.filter(row => 
-                selectedArities.includes(row.schedule) &&
-                parseInt(row.k) >= kMin && parseInt(row.k) <= kMax
+            // Handle selected arities (individual or groups)
+            let targetSchedules = selectedOptions.map(opt => opt.value).filter(v => v);
+            if (groupSimilar) {
+                // Expand groups: e.g., if "group-16" selected, get all 16-based originals
+                targetSchedules = targetSchedules.flatMap(val => {
+                    if (val.startsWith('group-')) {
+                        const base = parseInt(val.split('-')[1]);
+                        const groups = getUniqueArities(machineLabel, variant, true);
+                        return groups[base]?.map(p => p.original) || [];
+                    }
+                    return val; // Individual
+                });
+            }
+
+            if (targetSchedules.length === 0) {
+                console.warn('No valid schedules after expansion');
+                return;
+            }
+
+            // Filter rows
+            let filteredData = machineData.originalRows.filter(row => 
+                (!variant || row.csv === variant) &&
+                targetSchedules.includes(row.schedule) &&
+                row.k >= kMin && row.k <= kMax
             );
+            console.log(`Filtered data: ${filteredData.length} rows for schedules:`, targetSchedules.slice(0, 5)); // Log first 5
 
-            // Group by arity for multi-line plots
-            const tracesByArity = {};
-            selectedArities.forEach(arity => {
-                const arityData = filteredData.filter(row => row.schedule === arity);
-                if (arityData.length > 0) {
-                    const kVals = arityData.map(row => parseInt(row.k)).sort((a, b) => a - b);
-                    const proofBytes = kVals.map(k => {
-                        const row = arityData.find(r => parseInt(r.k) === k);
-                        return parseFloat(row?.proof_bytes) || null;
-                    });
-                    const proveS = kVals.map(k => {
-                        const row = arityData.find(r => parseInt(r.k) === k);
-                        return parseFloat(row?.prove_s) || null;
-                    });
-                    const verifyMs = kVals.map(k => {
-                        const row = arityData.find(r => parseInt(r.k) === k);
-                        return parseFloat(row?.verify_ms) || null;
-                    });
+            if (filteredData.length === 0) {
+                console.warn('No matching data');
+                return;
+            }
 
-                    tracesByArity[arity] = { k: kVals, proofBytes, proveS, verifyMs };
+            // Group by schedule for traces (same as before)
+            const tracesBySchedule = {};
+            targetSchedules.forEach(scheduleStr => {
+                const scheduleData = filteredData.filter(row => row.schedule === scheduleStr);
+                if (scheduleData.length > 0) {
+                    const kVals = [...new Set(scheduleData.map(row => row.k))].sort((a, b) => a - b);
+                    const parsed = parseSchedule(scheduleStr);
+                    const label = parsed ? parsed.label : scheduleStr;
+                    tracesBySchedule[label] = {
+                        k: kVals,
+                        proofBytes: kVals.map(k => scheduleData.find(r => r.k === k)?.proof_bytes || null),
+                        proveS: kVals.map(k => scheduleData.find(r => r.k === k)?.prove_s || null),
+                        verifyMs: kVals.map(k => scheduleData.find(r => r.k === k)?.verify_ms || null)
+                    };
+                    console.log(`Trace for ${label}: ${kVals.length} points`);
                 }
             });
 
-            // Plot Proof Size
-            const proofTraces = Object.entries(tracesByArity).map(([arity, vals]) => ({
-                x: vals.k,
-                y: vals.proofBytes,
-                type: 'scatter',
-                mode: 'lines+markers',
-                name: arity,
-                line: { shape: 'linear' }
-            }));
-            Plotly.newPlot('proofSizePlot', proofTraces, {
-                title: 'Proof Size (bytes) vs. k',
-                xaxis: { title: 'k' },
-                yaxis: { title: 'Proof Bytes' }
-            });
+            if (Object.keys(tracesBySchedule).length === 0) return;
 
-            // Plot Prover Time
-            const proverTraces = Object.entries(tracesByArity).map(([arity, vals]) => ({
-                x: vals.k,
-                y: vals.proveS,
-                type: 'scatter',
-                mode: 'lines+markers',
-                name: arity,
-                line: { shape: 'linear' }
-            }));
-            Plotly.newPlot('proverTimePlot', proverTraces, {
-                title: 'Prover Time (s) vs. k',
-                xaxis: { title: 'k' },
-                yaxis: { title: 'Prove Time (s)' }
-            });
+            // Plot (unchanged)
+            function plotData(divId, traces, title, yTitle) {
+                const plotTraces = Object.entries(traces).map(([name, vals]) => ({
+                    x: vals.k,
+                    y: vals[yTitle.toLowerCase().replace(' ', '') === 'proves' ? 'proveS' : yTitle.toLowerCase().includes('proof') ? 'proofBytes' : 'verifyMs'], // Map y
+                    type: 'scatter',
+                    mode: 'lines+markers',
+                    name: name,
+                    line: { shape: 'linear' }
+                }));
+                Plotly.newPlot(divId, plotTraces, {
+                    title: title,
+                    xaxis: { title: 'k' },
+                    yaxis: { title: yTitle }
+                });
+            }
 
-            // Plot Verify Time
-            const verifyTraces = Object.entries(tracesByArity).map(([arity, vals]) => ({
-                x: vals.k,
-                y: vals.verifyMs,
-                type: 'scatter',
-                mode: 'lines+markers',
-                name: arity,
-                line: { shape: 'linear' }
-            }));
-            Plotly.newPlot('verifyTimePlot', verifyTraces, {
-                title: 'Verify Time (ms) vs. k',
-                xaxis: { title: 'k' },
-                yaxis: { title: 'Verify Time (ms)' }
-            });
+            plotData('proofSizePlot', tracesBySchedule, 'Proof Size (bytes) vs. k', 'Proof Bytes');
+            plotData('proverTimePlot', tracesBySchedule, 'Prover Time (s) vs. k', 'Prove Time (s)');
+            plotData('verifyTimePlot', tracesBySchedule, 'Verify Time (ms) vs. k', 'Verify Time (ms)');
         }
 
         // Init
-        loadData();
-        // Trigger initial load (select first machine)
-        setTimeout(() => {
-            document.getElementById('machineSelect').selectedIndex = 0;
-            document.getElementById('machineSelect').dispatchEvent(new Event('change'));
-        }, 2000); // Delay for data load
+        loadData().then(() => {
+            if (csvUrls.length > 0) {
+                setTimeout(() => {
+                    const machineSelect = document.getElementById('machineSelect');
+                    if (machineSelect.options.length > 0) {
+                        machineSelect.selectedIndex = 0;
+                        machineSelect.dispatchEvent(new Event('change'));
+                    }
+                }, 5000);
+            }
+        });
     </script>
 </body>
 </html>
