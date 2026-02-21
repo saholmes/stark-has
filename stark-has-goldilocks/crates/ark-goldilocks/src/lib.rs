@@ -3,6 +3,8 @@
 #![allow(non_snake_case)]
 #![allow(unused_variables)]
 #![allow(unused_macros)]
+#![allow(unused_imports)]
+
 
 pub use field::Goldilocks;
 

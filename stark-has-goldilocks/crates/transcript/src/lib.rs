@@ -1,5 +1,7 @@
 //! Pluggable Fiat–Shamir transcript with backward-compatible API.
 //! Goldilocks-safe field embedding (64-bit).
+#![allow(dead_code)]
+#![allow(unused_imports)]
 
 use ark_ff::{BigInteger, PrimeField, Zero};
 use ark_goldilocks::Goldilocks as F;

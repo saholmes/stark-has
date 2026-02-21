@@ -1,4 +1,5 @@
 //! poly crate: thin helpers around ark_poly 0.5.x univariate dense polynomials.
+#[allow(unused_imports)]
 
 use ark_ff::{One, Zero};
 use ark_goldilocks::Goldilocks as F;

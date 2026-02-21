@@ -5,7 +5,8 @@ use blake3::Hasher;
 #[cfg(feature = "parallel")]
 use once_cell::sync::OnceCell;
 #[cfg(feature = "parallel")]
-use rayon::{prelude::*, ThreadPoolBuilder};
+use rayon::ThreadPoolBuilder;
+//use rayon::{prelude::*, ThreadPoolBuilder};
 
 /// Poseidon permutation parameters for benchmarking and M1 scaffolding.
 /// Default static width t=17 matches Merkle arity m=16 with capacity c=1.
