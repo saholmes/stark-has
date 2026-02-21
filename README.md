@@ -28,6 +28,17 @@ The parameter file for r values and arity parameters is in the file channel/benc
 To run the benchmarks you need to move to the crates/channel directory
 We implement rayon threads and this is enabled through the following command
 
+Features flags:  
+
+For Rayon support:
+--parallel     
+
+We support 3 FS-transcript backends - Dual-hash for Merkle binding is fixed with SHA3
+
+SHA3
+keccak
+fs_blake3
+
 We recommend using nohup if using remote server.  If not, simply run without nohup
 
 For IoT with 2 vcpu:  
